@@ -36,7 +36,7 @@ def event_handler_order_update(message):
 
 
 def event_handler_quote_update(message):
-    print(f"quote event: {time.strftime('%d-%m-%Y %H:%M:%S')} {message}")
+    # print(f"quote event: {time.strftime('%d-%m-%Y %H:%M:%S')} {message}")
     # logging.info(f"Quote update received: {message}")
     asyncio.run_coroutine_threadsafe(quote_queue.put(message), loop)
 
