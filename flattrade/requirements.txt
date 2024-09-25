@@ -1,4 +1,12 @@
-# pip install --no-deps NorenRestApi
-websockets
-websocket_client
-requests
+certifi==2024.8.30
+charset-normalizer==3.3.2
+dnspython==2.6.1
+idna==3.10
+NorenRestApi==0.0.30
+pymongo==4.9.1
+pyotp==2.9.0
+PyYAML==6.0.2
+requests==2.32.3
+urllib3==2.2.3
+websocket-client==1.8.0
+websockets==13.0.1

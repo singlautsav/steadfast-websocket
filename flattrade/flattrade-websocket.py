@@ -2,6 +2,11 @@ import asyncio
 import websockets
 import json
 import logging
+import hashlib
+# from pya3 import *
+from urllib.parse import parse_qs,urlparse
+from urllib.request import Request, urlopen
+import pyotp
 
 """ Using the NorenRestApi latest package (NorenRestApiPy is class name, although there is a separate package with the same name NorenRestApiPy - older version, Don't get confused, we don't want NorenRestApiPy old package, we want NorenRestApi)
 This package 'NorenRestApi' has to be installed without it's dependencies, otherwise it will not work, So we have added pip install --no-deps NorenRestApi in install-all.bat file
@@ -9,11 +14,25 @@ DO NOT CHANGE NorenRestApiPy to NorenRestApi """
 from NorenRestApiPy.NorenApi import NorenApi
 import requests
 import time
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
+import yaml
 
 logging.basicConfig(level=logging.INFO)
 
 # Flag to tell us if the websocket is open
 socket_opened = False
+basedir = '.'
+
+with open(f'{basedir}/cred.yml') as f:
+    impo = yaml.load(f, Loader=yaml.FullLoader)
+mongoURI = impo['mongoURI']
+mongoIdentifier = impo['mongoIdentifierNavya']
+client = MongoClient(mongoURI , server_api=ServerApi('1'))
+for cred in client['creds']['flattrade'].find({'uniqueIdentifier':mongoIdentifier}):
+    pass
+
+
 
 # Initialize the API object with required arguments
 try:
@@ -62,22 +81,62 @@ async def get_credentials_and_security_ids():
         return None, None
 
 
-async def wait_for_data():
-    while True:
-        usersession, userid = (
-            await get_credentials_and_security_ids()
-        )
-        if usersession and userid:
-            return usersession, userid
-        await asyncio.sleep(5)  
+# async def wait_for_data():
+#     while True:
+#         usersession, userid = (
+#             await get_credentials_and_security_ids()
+#         )
+#         if usersession and userid:
+#             return usersession, userid
+#         await asyncio.sleep(5)  
+
+def updateMongo(value, updation):
+    if value=='creds':
+        client['creds']['flattrade'].update_one({'uniqueIdentifier':mongoIdentifier},{'$set':updation})
 
 
-async def setup_api_connection(
-    usersession, userid
-):
+userid = cred['user']
+password = cred['pwd']
+API_KEY = cred['apikey']
+API_SECRET = cred['apisecret']
+totp_key = cred['totp_key']
+    
+
+
+def reauth():
     global api
+    headerJson ={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36","Referer":"https://auth.flattrade.in/"}
+    sesUrl = 'https://authapi.flattrade.in/auth/session'
+    passwordEncrpted =  hashlib.sha256(password.encode()).hexdigest()
+    ses = requests.Session()
+    res_pin = ses.post(sesUrl,headers=headerJson)
+    sid = res_pin.text
+    url2 = 'https://authapi.flattrade.in/ftauth'
+    payload = {"UserName":userid,"Password":passwordEncrpted,"PAN_DOB":pyotp.TOTP(totp_key).now(),"App":"","ClientID":"","Key":"","APIKey":API_KEY,"Sid":sid}
+    res2 = ses.post(url2, json=payload)
+    reqcodeRes = res2.json()
+    parsed = urlparse(reqcodeRes['RedirectURL'])
+    reqCode = parse_qs(parsed.query)['code'][0]
+    api_secret =API_KEY+ reqCode + API_SECRET
+    api_secret =  hashlib.sha256(api_secret.encode()).hexdigest()
+    payload = {"api_key":API_KEY, "request_code":reqCode, "api_secret":api_secret}
+    url3 = 'https://authapi.flattrade.in/trade/apitoken'
+    res3 = ses.post(url3, json=payload)
+    usertoken = res3.json()['token']
+    ret = api.set_session(userid= userid, password = password, usertoken= usertoken)
+    cred['user_token'] = usertoken
+    print(usertoken)
+    updateMongo('creds', cred)
+    return ret
+
+async def setup_api_connection(cred):
+    global api
+    ret = reauth()
+    # ret = api.set_session(userid= cred['user_id'], password = cred['pwd'], usertoken= cred['user_token'])
+    
     # Set up the session
-    ret = api.set_session(userid=userid, password="", usertoken=usersession)
+    
+    # ret = api.set_session(userid=userid, password="", usertoken=usersession)
 
     if ret is not None:
         # Start the websocket
@@ -166,17 +225,15 @@ async def main():
     try:
         # Wait for valid credentials and security IDs
         logging.info("Waiting for valid data...")
-        usersession, userid= (
-            await wait_for_data()
-        )
-        logging.info(
-            f"Using usersession: {usersession[:5]}...{usersession[-5:]}, userid: {userid[:2]}....{userid[-2:]}"
-        )
+        # usersession, userid= (
+        #     await wait_for_data()
+        # )
+        # logging.info(
+        #     f"Using usersession: {usersession[:5]}...{usersession[-5:]}, userid: {userid[:2]}....{userid[-2:]}"
+        # )
 
         # Set up API connection
-        await setup_api_connection(
-            usersession, userid
-        )
+        await setup_api_connection(cred)
 
         # Set up WebSocket server
         server = await websockets.serve(websocket_server, "localhost", 8765)
